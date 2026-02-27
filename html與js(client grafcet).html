@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Medication Reminder Tool</title>
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+    <header>
+        Medication Reminder Tool
+    </header>
+
+    <div class="container">
+
+        <div class="form-container">
+            <label for="medName">Medication Name</label>
+            <input type="text" id="medName" placeholder="Enter medication name">
+
+            <label for="reminderTime">Reminder Time</label>
+            <input type="datetime-local" id="reminderTime" name="reminderTime" required>
+
+            <label for="reminderSound">Reminder Sound</label>
+            <select id="reminderSound">
+                <option value=1>little star</option>
+                <option value=2>merry christmas</option>
+                <option value=3>happy birthday</option>
+            </select>
+
+            <button onclick="addReminder()">Add Reminder</button>
+        </div>
+
+        <table id="reminderTable">
+            <thead>
+                <tr>
+                    <th>Medication Name</th>
+                    <th>Reminder Time</th>
+                    <th>Sound</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                <!-- Dynamic Reminder List will be injected here -->
+            </tbody>
+        </table>
+
+    </div>
+
+    <div class="footer">
+        <p>ESP32 Medication Reminder Tool</p>
+    </div>
+
+    <script>
+
+        window.onload = function() {
+            setInterval(grafcet, 1000);
+        };
+
+        //global variables
+        let client_state = 0;
+        let add_btn = false;
+        let del_btn = false;
+        let indexOfReminder_del = -1;
+        let input_error = false;
+        let input_error_msg = "";
+
+        function grafcet() {
+            if (client_state == 0) {
+                client_state = 1;
+            }
+            else if (client_state == 1) {
+                if (add_btn) {
+                    client_state = 2;
+                    add_btn = false;
+                }
+                else if (del_btn) {
+                    client_state = 3;
+                    del_btn = false;
+                }
+                else {
+                    client_state = 1;
+                }
+            }
+            else if (client_state == 2) {
+                if (input_error) {
+                    client_state = 5;
+                }
+                else {
+                    client_state = 4;
+                }
+                input_error = false;
+            }
+            else if (client_state == 3) {
+                client_state = 1;
+            }
+            else if (client_state == 4) {
+                client_state = 6;
+            }
+            else if (client_state == 5) {
+                client_state = 1;
+            }
+            else if (client_state == 6) {
+                client_state = 1;
+            }
+            else {}
+            action();
+        }
+
+        function action() {
+            if (client_state == 0) {
+                initialize_page();
+            }
+            else if (client_state == 1) {
+                updateReminderTable();
+            }
+            else if (client_state == 2) {
+                checkInput();
+            }
+            else if (client_state == 3) {
+                sendDeleteReminderRequest();
+            }
+            else if (client_state == 4) {
+                sendAddReminderRequest();
+            }
+            else if (client_state == 5) {
+                alert(input_error_msg);
+            }
+            else if (client_state == 6) {
+                clearForm();
+            }
+            else {}
+        }
+
+        // Function to initialize the page
+        function initialize_page() {
+            // Function to prevent special characters in medication name input
+            document.getElementById('medName').addEventListener('input', function() {
+                this.value = this.value.replace(/[^a-zA-Z0-9 ]/g, '');
+            });
+        }
+
+        // Function to update the reminder table
+        function updateReminderTable() {
+            fetch('/get_reminder', {
+                method: 'GET',
+            })
+            .then(response => response.json())
+            .then(data => setReminderList(data));
+            const reminderList = getReminderList();
+            const tableBody = document.getElementById('reminderTable').getElementsByTagName('tbody')[0];
+            tableBody.innerHTML = '';
+            reminderList.forEach((reminder, index) => {
+                const row = document.createElement('tr');
+                reminderTime_str = getFutureTime(parseInt(reminder.reminderTime));
+                reminderSound_type = parseInt(reminder.reminderSound);
+                reminderSound_str = reminderSound_type == 1 ? 'little star' : reminderSound_type == 2 ? 'merry christmas' : 'happy birthday';
+                row.innerHTML = `
+                    <td>${reminder.medName}</td>
+                    <td>${reminderTime_str}</td>
+                    <td>${reminderSound_str}</td>
+                    <td><button class="delete-btn" onclick="deleteReminder(${index})">Delete</button></td>
+                `;
+                tableBody.appendChild(row);
+            });
+        }
+
+        function addReminder() {
+            add_btn = true;
+        }
+
+        function deleteReminder(index) {
+            indexOfReminder_del = index;
+            del_btn = true;
+        }
+
+        function checkInput() {
+            const medName = document.getElementById('medName').value;
+            const reminderTime = document.getElementById('reminderTime').value;
+            const reminderSound = document.getElementById('reminderSound').value;
+            if (medName && reminderTime && reminderSound) {
+                if (medName.length > 20) {
+                    input_error_msg = "Error: medication name is too long";
+                    input_error = true;
+                    return;
+                }
+                waitTime = (new Date(reminderTime).getTime() - new Date().getTime()) / 1000;
+                if (waitTime < 0) {
+                    input_error_msg = "Error: Reminder time cannot be in the past.";
+                    input_error = true;
+                    return;
+                }
+                else if (waitTime > 7*24*60*60) {
+                    input_error_msg = "Error: Reminder time is more than 7 days in the future.";
+                    input_error = true;
+                    return;
+                }
+                input_error_msg = "No error: input data complete";
+                input_error = false;
+                return;
+            } else {
+                input_error_msg = "Error: input data incomplete. Please fill in all fields.";
+                input_error = true;
+                return;
+            }
+        }
+
+        // Function to send "add reminder request" to server
+        function sendAddReminderRequest() {
+            const medName = document.getElementById('medName').value;
+            const reminderTime = document.getElementById('reminderTime').value;
+            setReminderTime = (new Date(reminderTime).getTime() - new Date().getTime()) / 1000;
+            const reminderSound = document.getElementById('reminderSound').value;
+            fetch('/set_reminder', {
+                method: 'POST',
+                body:
+                  new URLSearchParams({
+                    'action': 'add',
+                    'medName': medName,
+                    'reminderTime': setReminderTime,
+                    'selectedMusic': reminderSound
+                  }),
+            })
+            .then(response => response.text())
+            .then(data => check(data));
+        }
+
+        // Function to send "delete reminder request" to server
+        function sendDeleteReminderRequest() {
+            const reminderList = getReminderList();
+            medname = reminderList[indexOfReminder_del].medName;
+            fetch('/set_reminder', {
+                method: 'POST',
+                body:
+                  new URLSearchParams({
+                    'action': 'remove',
+                    'medName': medname,
+                    'reminderTime': 0,
+                    'selectedMusic': 0
+                  }),
+            })
+            .then(response => response.text())
+            .then(data => check(data));
+            indexOfReminder_del = -1;
+        }
+
+        // Function to clear form inputs
+        function clearForm() {
+            document.getElementById('medName').value = '';
+            document.getElementById('reminderTime').value = '';
+            document.getElementById('reminderSound').value = 1;
+        }
+
+        // Function to get future time
+        function getFutureTime(waitTime) {
+            const now = new Date();
+            now.setSeconds(now.getSeconds() + waitTime);
+  
+            const dayOfWeek = now.toLocaleString('en-us', { weekday: 'long' });
+            const year = now.getFullYear();
+            const month = String(now.getMonth() + 1).padStart(2, '0');
+            const date = String(now.getDate()).padStart(2, '0');
+            const hours = String(now.getHours()).padStart(2, '0');
+            const minutes = String(now.getMinutes()).padStart(2, '0');
+
+            return `${dayOfWeek}, ${year}/${month}/${date}, ${hours}:${minutes}`;
+        }
+
+        // Function to check response data
+        function check(data) {
+            if (data === 'Cannot set reminder. Reminder list is full.') {
+                alert('Cannot set reminder. Reminder list is full.');
+            }
+            else if (data === 'Reminder set successfully.') {
+                alert(data);
+            }
+            else if (data === 'Reminder removed successfully.') {
+                alert(data);
+            }
+            else {
+                alert(data);
+            }
+        }
+
+        // Get reminder list from session storage
+        function getReminderList() {
+            const reminderList = sessionStorage.getItem('reminderList');
+            return reminderList ? JSON.parse(reminderList) : [];
+        }
+
+        // Set reminder list to session storage
+        function setReminderList(reminderList) {
+            sessionStorage.setItem('reminderList', JSON.stringify(reminderList));
+        }
+
+    </script>
+
+</body>
+</html>
